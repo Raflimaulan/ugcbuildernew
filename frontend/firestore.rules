@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── users/{userId} ───────────────────────────────────────────────────────
+    match /users/{userId} {
+
+      // Hanya pemilik akun sendiri yang bisa baca
+      allow read: if request.auth != null && request.auth.uid == userId;
+
+      // Create dokumen baru (registrasi pertama kali)
+      allow create: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.uid == userId;
+
+      // Update: hanya field yang diizinkan yang boleh berubah
+      allow update: if request.auth != null
+        && request.auth.uid == userId
+        && validQuotaUpdate();
+
+      function validQuotaUpdate() {
+        let incoming = request.resource.data;
+        let existing = resource.data;
+
+        // Field yang boleh diubah user
+        let allowedFields = ['quota', 'jobCount', 'displayName'];
+        let changedFields = incoming.diff(existing).affectedKeys();
+        
+        // Semua field yang berubah harus ada di allowedFields
+        let onlyAllowedChanged = changedFields.hasOnly(allowedFields);
+
+        // Validasi nilai quota (kalau ada perubahan quota)
+        let quotaOk = !changedFields.hasAny(['quota']) || (
+          incoming.quota.videoUsed is int &&
+          incoming.quota.imageUsed is int &&
+          incoming.quota.videoUsed >= 0 &&
+          incoming.quota.imageUsed >= 0 &&
+          incoming.quota.videoUsed <= 10 &&
+          incoming.quota.imageUsed <= 20
+        );
+
+        return onlyAllowedChanged && quotaOk;
+      }
+    }
+
+    // Tolak semua akses lain
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
