@@ -4,8 +4,6 @@ import type {
   SignedUploadResponse,
   ToolType,
 } from '../types';
-
-// Kalau VITE_API_BASE_URL tidak diset, pakai relative URL (via Vite proxy)
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 
 function normalizeJobStatus(status?: string): string {
@@ -19,9 +17,11 @@ function normalizeJobStatus(status?: string): string {
   return s;
 }
 
-// Tidak lagi throw error kalau kosong — pakai relative URL supaya Vite proxy bisa handle
-function getApiBase(): string {
-  return API_BASE; // bisa kosong string = relative URL
+function requireApiBase(): string {
+  if (!API_BASE) {
+    throw new Error('VITE_API_BASE_URL belum diset.');
+  }
+  return API_BASE;
 }
 
 function authHeader(token?: string): HeadersInit {
@@ -117,7 +117,7 @@ export async function signUpload(
   payload: SignedUploadRequest,
   token?: string,
 ): Promise<SignedUploadResponse> {
-  const apiBase = getApiBase();
+  const apiBase = requireApiBase();
 
   const response = await fetch(`${apiBase}/uploads/sign`, {
     method: 'POST',
@@ -140,12 +140,32 @@ export async function signUpload(
   return data;
 }
 
+export async function uploadFileToSignedUrl(
+  uploadUrl: string,
+  file: File | Blob,
+  contentType?: string,
+  extraHeaders?: Record<string, string>,
+): Promise<void> {
+  const response = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': contentType ?? (file instanceof File ? file.type : 'application/octet-stream'),
+      ...(extraHeaders ?? {}),
+    },
+    body: file,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Upload ke signed URL gagal (${response.status} ${response.statusText}).`);
+  }
+}
+
 export async function generateMedia(
   toolType: ToolType,
   arg2?: FormData | string,
   arg3?: FormData | string,
 ): Promise<GenerateMediaResponse> {
-  const apiBase = getApiBase();
+  const apiBase = requireApiBase();
   const { formData, token } = normalizeGenerateArgs(arg2, arg3);
 
   const isNano = isNanoTool(toolType);
@@ -178,7 +198,7 @@ export async function generateMedia(
 }
 
 export async function getJob(jobId: string, token?: string): Promise<GenerateMediaResponse> {
-  const apiBase = getApiBase();
+  const apiBase = requireApiBase();
 
   const response = await fetch(`${apiBase}/jobs/${encodeURIComponent(jobId)}`, {
     method: 'GET',

@@ -1,40 +1,26 @@
 import path from 'path';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
-
-export default defineConfig({
-  define: {
-    'process.env.API_KEY': JSON.stringify('api-key-this-is-not-used-can-be-ignored!'),
-  },
-  server: {
-    proxy: {
-      // Proxy /api ke backend supaya tidak kena CORS saat dev
-      '/generate': {
-        target: 'http://localhost:5000',
-        changeOrigin: true,
+export default defineConfig(({ mode }) => {
+    const env = loadEnv(mode, process.cwd(), '');
+    return {
+      define: {
+        // This is just generic value for the GEMINI API key.
+        // This is not used at all, and can be ignored!
+        'process.env.API_KEY' : JSON.stringify('api-key-this-is-not-used-can-be-ignored!'),
       },
-      '/jobs': {
-        target: 'http://localhost:5000',
-        changeOrigin: true,
+      server: {
+        proxy: {
+          //Target your Node.js backend
+          '/api-proxy': 'http://localhost:5000',
+          
+        },
       },
-      '/uploads': {
-        target: 'http://localhost:5000',
-        changeOrigin: true,
-      },
-      '/health': {
-        target: 'http://localhost:5000',
-        changeOrigin: true,
-      },
-      '/api-proxy': {
-        target: 'http://localhost:5000',
-        changeOrigin: true,
-      },
-    },
-  },
-  plugins: [react()],
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, '.'),
-    }
-  }
+      plugins: react(),
+      resolve: {
+        alias: {
+          '@': path.resolve(__dirname, '.'),
+        }
+      }
+    };
 });

@@ -1,5 +1,11 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState } from 'react';
+import type { JobRecord } from '../types';
 
+/**
+ * Local status normalizer.
+ * Sengaja di-inline supaya JobCard TIDAK bergantung pada export `normalizeJobStatus` dari types.ts
+ * (karena export itu tidak ada di repo-mu, dan bikin Vercel build gagal).
+ */
 function normalizeJobStatus(status?: string): string {
   if (!status) return 'queued';
   const s = String(status).toLowerCase();
@@ -11,8 +17,19 @@ function normalizeJobStatus(status?: string): string {
   return s;
 }
 
-function getResultUrl(job: any): string | undefined {
-  return job.result?.url || job.resultUrl;
+type JobCardProps = {
+  job: JobRecord;
+  onRefresh?: (jobId: string) => void | Promise<void>;
+};
+
+function getResultUrl(job: JobRecord): string | undefined {
+  return job.result?.url || (job as any).resultUrl;
+}
+
+function getErrorText(error: JobRecord['error']): string | undefined {
+  if (!error) return undefined;
+  if (typeof error === 'string') return error;
+  return (error as any).message || 'Terjadi error yang tidak diketahui.';
 }
 
 async function copyText(value: string): Promise<boolean> {
@@ -20,162 +37,117 @@ async function copyText(value: string): Promise<boolean> {
     await navigator.clipboard.writeText(value);
     return true;
   } catch {
-    const ta = document.createElement('textarea');
-    ta.value = value;
-    ta.style.cssText = 'position:fixed;opacity:0';
-    document.body.appendChild(ta);
-    ta.select();
-    try { const ok = document.execCommand('copy'); document.body.removeChild(ta); return ok; }
-    catch { document.body.removeChild(ta); return false; }
+    const textarea = document.createElement('textarea');
+    textarea.value = value;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    try {
+      const ok = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return ok;
+    } catch {
+      document.body.removeChild(textarea);
+      return false;
+    }
   }
 }
 
-type JobCardProps = {
-  job: any;
-  onUpdate?: (job: any) => void;
-  token?: string;
-};
-
-const POLL_INTERVAL_MS = 5000;
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
-
-export default function JobCard({ job, onUpdate, token }: JobCardProps) {
+export default function JobCard({ job, onRefresh }: JobCardProps) {
   const [copied, setCopied] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isMounted = useRef(true);
 
   const status = useMemo(() => normalizeJobStatus(job.status), [job.status]);
   const resultUrl = useMemo(() => getResultUrl(job), [job]);
-  const isActive = status === 'queued' || status === 'running';
-
-  // Bersihkan saat unmount
-  useEffect(() => {
-    isMounted.current = true;
-    return () => { isMounted.current = false; if (timerRef.current) clearTimeout(timerRef.current); };
-  }, []);
-
-  // Polling saat job masih aktif
-  useEffect(() => {
-    if (!isActive || !token || !job.jobId) return;
-
-    const poll = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/jobs/${encodeURIComponent(job.jobId)}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok || !isMounted.current) return;
-
-        const data = await res.json();
-        const updatedStatus = normalizeJobStatus(data.status);
-
-        if (onUpdate && isMounted.current) {
-          onUpdate({
-            ...job,
-            status: updatedStatus,
-            result: data.result ?? job.result ?? null,
-            resultUrl: data.result?.url || data.resultUrl || job.resultUrl,
-            error: data.error ?? job.error ?? null,
-            updatedAt: data.updatedAt || new Date().toISOString(),
-          });
-        }
-
-        // Lanjut poll kalau masih aktif
-        if ((updatedStatus === 'queued' || updatedStatus === 'running') && isMounted.current) {
-          timerRef.current = setTimeout(poll, POLL_INTERVAL_MS);
-        }
-      } catch (e) {
-        // Retry saat error
-        if (isMounted.current) {
-          timerRef.current = setTimeout(poll, POLL_INTERVAL_MS * 2);
-        }
-      }
-    };
-
-    // Start poll setelah 2 detik pertama
-    timerRef.current = setTimeout(poll, 2000);
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [job.jobId, isActive, token]);
+  const errorText = useMemo(() => getErrorText(job.error), [job.error]);
 
   const handleCopy = async () => {
-    setCopied(await copyText(job.jobId));
-    setTimeout(() => setCopied(false), 1500);
+    const ok = await copyText(job.jobId);
+    setCopied(ok);
+    setTimeout(() => setCopied(false), 1200);
+  };
+
+  const handleView = () => {
+    if (!resultUrl) return;
+    window.open(resultUrl, '_blank', 'noopener,noreferrer');
   };
 
   return (
-    <div className={`rounded-xl border p-4 transition-all duration-300 ${
-      status === 'succeeded' ? 'border-emerald-500/25 bg-emerald-950/10' :
-      status === 'failed'    ? 'border-rose-500/25 bg-rose-950/10' :
-      isActive               ? 'border-amber-500/30 bg-amber-950/5' :
-                               'border-white/10 bg-black/20'
-    }`}>
+    <div className="rounded-xl border border-white/10 bg-black/30 p-4">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-
-          {/* Status row */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-              status === 'succeeded' ? 'bg-emerald-500/15 text-emerald-300' :
-              status === 'failed'    ? 'bg-rose-500/15 text-rose-300' :
-              status === 'running'   ? 'bg-amber-500/15 text-amber-300' :
-                                       'bg-slate-500/15 text-slate-300'
-            }`}>
-              {isActive && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
-              {status === 'queued'    ? 'menunggu' :
-               status === 'running'  ? 'memproses…' :
-               status === 'succeeded'? 'berhasil' :
-               status === 'failed'   ? 'gagal' : status}
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span
+              className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                status === 'succeeded'
+                  ? 'bg-emerald-500/15 text-emerald-300'
+                  : status === 'failed'
+                  ? 'bg-rose-500/15 text-rose-300'
+                  : status === 'running'
+                  ? 'bg-amber-500/15 text-amber-300'
+                  : 'bg-slate-500/15 text-slate-300'
+              }`}
+            >
+              {status}
             </span>
 
+            <span className="text-xs text-white/60">ID:</span>
             <button
+              type="button"
               onClick={handleCopy}
-              className="text-[10px] font-mono text-white/35 hover:text-white/60 transition-colors truncate max-w-[150px]"
-              title={job.jobId}
+              className="truncate text-xs font-mono text-white/80 hover:text-white"
+              title="Copy Job ID"
             >
-              {job.jobId?.slice(0, 24)}…
+              {job.jobId}
             </button>
-            {copied && <span className="text-[10px] text-emerald-400">✓ copied</span>}
+
+            {copied && <span className="text-xs text-emerald-300">copied</span>}
           </div>
 
-          {/* Prompt */}
           {job.prompt && (
-            <p className="mt-2 line-clamp-2 text-sm font-medium text-white/90">
+            <div className="mt-2 line-clamp-2 text-sm font-semibold text-white">
               {job.prompt}
-            </p>
-          )}
-
-          {/* Meta */}
-          <p className="mt-1 text-xs text-white/40">
-            {[job.provider?.toUpperCase(), job.toolType?.toUpperCase()].filter(Boolean).join(' • ')}
-          </p>
-
-          {/* Progress bar saat aktif */}
-          {isActive && (
-            <div className="mt-3 h-1 bg-white/10 rounded-full overflow-hidden">
-              <div className="h-full w-full bg-gradient-to-r from-amber-400/40 to-amber-400/80 rounded-full"
-                style={{ animation: 'shimmer 2s infinite linear', backgroundSize: '200% 100%' }} />
             </div>
           )}
 
-          {/* Error */}
-          {job.error && (
+          <div className="mt-1 text-xs text-white/60">
+            {job.provider ? String(job.provider).toUpperCase() : 'PROVIDER'}{' '}
+            {job.toolType ? `• ${String(job.toolType).toUpperCase()}` : ''}
+          </div>
+
+          {errorText && (
             <div className="mt-2 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-              {typeof job.error === 'string' ? job.error : job.error?.message ?? 'Error tidak diketahui'}
+              {errorText}
             </div>
           )}
         </div>
 
-        {/* View button */}
-        <button
-          onClick={() => resultUrl && window.open(resultUrl, '_blank', 'noopener,noreferrer')}
-          disabled={!resultUrl}
-          className={`shrink-0 rounded-lg px-3 py-2 text-xs font-medium transition-all ${
-            resultUrl
-              ? 'bg-primary/80 hover:bg-primary text-white shadow-md'
-              : 'bg-white/5 text-white/20 cursor-not-allowed'
-          }`}
-        >
-          View Media
-        </button>
+        <div className="flex flex-col gap-2">
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={() => onRefresh(job.jobId)}
+              className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/80 hover:bg-white/10"
+              title="Refresh job"
+            >
+              Refresh
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={handleView}
+            disabled={!resultUrl}
+            className={`rounded-lg px-3 py-2 text-xs ${
+              resultUrl
+                ? 'bg-white/10 text-white hover:bg-white/15'
+                : 'bg-white/5 text-white/30 cursor-not-allowed'
+            }`}
+          >
+            View Media
+          </button>
+        </div>
       </div>
     </div>
   );
