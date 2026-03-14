@@ -24,7 +24,14 @@ import {
   CheckCircle2,
   Menu,
   X,
+  LogOut,
+  ChevronDown,
+  BarChart2,
+  AlertTriangle,
 } from 'lucide-react';
+import { LandingPage } from './components/LandingPage';
+import { AuthPage } from './components/AuthPage';
+import { useAuth, LIMIT_VIDEO, LIMIT_IMAGE } from './contexts/AuthContext';
 
 const IMAGE_GENERATION_TYPES = [
   { value: 'text', label: 'Text to Image', description: 'Generate from prompt only, without any reference image.' },
@@ -107,7 +114,17 @@ const VIDEO_MODEL_MODES = [
 
 type VideoModelMode = typeof VIDEO_MODEL_MODES[number]['value'];
 
-const App: React.FC = () => {
+type AppView = 'landing' | 'login' | 'register';
+
+const StudioApp: React.FC = () => {
+  const {
+    user, userProfile, logout,
+    canGenerateVideo, canGenerateImage,
+    incrementVideoUsage, incrementImageUsage,
+    remainingVideo, remainingImage,
+    quotaLoading,
+  } = useAuth();
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [mode, setMode] = useState<ToolType>(() => loadState('ugc8s_mode', ToolType.VIDEO_VEO));
   const [apiToken, setApiToken] = useState(() => {
     if (typeof window === 'undefined') return '';
@@ -365,8 +382,19 @@ const App: React.FC = () => {
       return;
     }
 
-    const effectiveUseMock = false;
+    // ── Cek quota limit ─────────────────────────────────────────────────────
     const isImageMode = mode === ToolType.IMAGE_NANO;
+    if (isImageMode && !canGenerateImage()) {
+      alert(`Batas generate gambar harian kamu sudah habis (${LIMIT_IMAGE} gambar/hari).\nLimit akan reset otomatis besok pukul 00:00.`);
+      return;
+    }
+    if (!isImageMode && !canGenerateVideo()) {
+      alert(`Batas generate video harian kamu sudah habis (${LIMIT_VIDEO} video/hari).\nLimit akan reset otomatis besok pukul 00:00.`);
+      return;
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
+    const effectiveUseMock = false;
     const isReferenceImageMode = isImageMode && imageGenerationType === 'reference';
 
     if (mode === ToolType.VIDEO_VEO) {
@@ -489,6 +517,13 @@ const App: React.FC = () => {
 
       setJobs((prev) => [newJob, ...prev]);
       setTimeout(() => refreshJob((newJob as any).jobId), 1500);
+
+      // Increment quota — fire and forget (tidak blocking isSubmitting)
+      if (isImageMode) {
+        incrementImageUsage().catch((e) => console.warn('increment image error:', e));
+      } else {
+        incrementVideoUsage().catch((e) => console.warn('increment video error:', e));
+      }
     } catch (error) {
       console.error(error);
       alert('Failed to start generation job. Check console for details.');
@@ -627,6 +662,57 @@ const App: React.FC = () => {
           </nav>
 
           <div className="p-4 border-t border-white/10 space-y-2">
+            {/* User info + logout */}
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white/5 border border-white/5 mb-1">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center text-white text-sm font-bold shrink-0">
+                {(user?.displayName || user?.email || 'U')[0].toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-medium text-white truncate">{user?.displayName || 'Pengguna'}</div>
+                <div className="text-[10px] text-gray-500 truncate">{user?.email}</div>
+              </div>
+              <button
+                onClick={() => { logout(); closeMobileMenu(); }}
+                className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] text-red-400 hover:bg-red-500/10 transition-colors"
+              >
+                <LogOut className="w-3 h-3" />
+                Keluar
+              </button>
+            </div>
+
+            {/* Quota bars (mobile) */}
+            <div className="rounded-xl bg-white/[0.04] border border-white/[0.06] p-3 space-y-2.5">
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <BarChart2 className="w-3 h-3 text-primary" />
+                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Penggunaan Hari Ini</span>
+              </div>
+              <div className="space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-[10px] text-gray-500">🎬 Video</span>
+                  <span className={`text-[10px] font-semibold ${remainingVideo() === 0 ? 'text-red-400' : remainingVideo() <= 3 ? 'text-yellow-400' : 'text-green-400'}`}>
+                    {quotaLoading ? '...' : `${remainingVideo()} / ${LIMIT_VIDEO}`}
+                  </span>
+                </div>
+                <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full transition-all duration-500 ${remainingVideo() === 0 ? 'bg-red-500' : remainingVideo() <= 3 ? 'bg-yellow-500' : 'bg-primary'}`}
+                    style={{ width: quotaLoading ? '0%' : `${Math.min(100, ((LIMIT_VIDEO - remainingVideo()) / LIMIT_VIDEO) * 100)}%` }} />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-[10px] text-gray-500">🖼️ Gambar</span>
+                  <span className={`text-[10px] font-semibold ${remainingImage() === 0 ? 'text-red-400' : remainingImage() <= 5 ? 'text-yellow-400' : 'text-green-400'}`}>
+                    {quotaLoading ? '...' : `${remainingImage()} / ${LIMIT_IMAGE}`}
+                  </span>
+                </div>
+                <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full transition-all duration-500 ${remainingImage() === 0 ? 'bg-red-500' : remainingImage() <= 5 ? 'bg-yellow-500' : 'bg-pink-500'}`}
+                    style={{ width: quotaLoading ? '0%' : `${Math.min(100, ((LIMIT_IMAGE - remainingImage()) / LIMIT_IMAGE) * 100)}%` }} />
+                </div>
+              </div>
+              <p className="text-[9px] text-gray-600">Reset otomatis setiap hari pukul 00:00</p>
+            </div>
+
             <button
               onClick={() => setShowTokenInput(!showTokenInput)}
               className="flex items-center gap-2 text-xs text-gray-500 hover:text-white transition-colors w-full px-2 py-1"
@@ -735,6 +821,80 @@ const App: React.FC = () => {
           </nav>
 
           <div className="p-4 border-t border-white/10 space-y-2">
+            {/* User profile */}
+            <div className="relative mb-1">
+              <button
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 transition-all border border-white/5"
+              >
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center text-white text-sm font-bold shrink-0">
+                  {(user?.displayName || user?.email || 'U')[0].toUpperCase()}
+                </div>
+                <div className="flex-1 text-left min-w-0">
+                  <div className="text-xs font-medium text-white truncate">{user?.displayName || 'Pengguna'}</div>
+                  <div className="text-[10px] text-gray-500 truncate">{user?.email}</div>
+                </div>
+                <ChevronDown className="w-3 h-3 text-gray-500 shrink-0" />
+              </button>
+              {showUserMenu && (
+                <div className="absolute bottom-full left-0 right-0 mb-1 rounded-xl border border-white/10 bg-surface shadow-xl overflow-hidden z-50">
+                  <div className="px-3 py-2 border-b border-white/5">
+                    <div className="text-xs font-medium text-white">{user?.displayName}</div>
+                    <div className="text-[10px] text-gray-500">{userProfile?.plan === 'pro' ? '⭐ Pro Plan' : '🆓 Free Plan'}</div>
+                  </div>
+                  <button
+                    onClick={() => { logout(); setShowUserMenu(false); }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
+                  >
+                    <LogOut className="w-3 h-3" />
+                    Keluar
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Quota usage bar */}
+            <div className="rounded-xl bg-white/[0.04] border border-white/[0.06] p-3 space-y-2.5">
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <BarChart2 className="w-3 h-3 text-primary" />
+                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Penggunaan Hari Ini</span>
+              </div>
+
+              {/* Video bar */}
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] text-gray-500">🎬 Video</span>
+                  <span className={`text-[10px] font-semibold ${remainingVideo() === 0 ? 'text-red-400' : remainingVideo() <= 3 ? 'text-yellow-400' : 'text-green-400'}`}>
+                    {quotaLoading ? '...' : `${remainingVideo()} / ${LIMIT_VIDEO}`}
+                  </span>
+                </div>
+                <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${remainingVideo() === 0 ? 'bg-red-500' : remainingVideo() <= 3 ? 'bg-yellow-500' : 'bg-primary'}`}
+                    style={{ width: quotaLoading ? '0%' : `${Math.min(100, ((LIMIT_VIDEO - remainingVideo()) / LIMIT_VIDEO) * 100)}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Image bar */}
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] text-gray-500">🖼️ Gambar</span>
+                  <span className={`text-[10px] font-semibold ${remainingImage() === 0 ? 'text-red-400' : remainingImage() <= 5 ? 'text-yellow-400' : 'text-green-400'}`}>
+                    {quotaLoading ? '...' : `${remainingImage()} / ${LIMIT_IMAGE}`}
+                  </span>
+                </div>
+                <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${remainingImage() === 0 ? 'bg-red-500' : remainingImage() <= 5 ? 'bg-yellow-500' : 'bg-pink-500'}`}
+                    style={{ width: quotaLoading ? '0%' : `${Math.min(100, ((LIMIT_IMAGE - remainingImage()) / LIMIT_IMAGE) * 100)}%` }}
+                  />
+                </div>
+              </div>
+
+              <p className="text-[9px] text-gray-600">Reset otomatis setiap hari pukul 00:00</p>
+            </div>
+
             <button
               onClick={() => setShowTokenInput(!showTokenInput)}
               className="flex items-center gap-2 text-xs text-gray-500 hover:text-white transition-colors w-full px-2 py-1"
@@ -1151,15 +1311,47 @@ const App: React.FC = () => {
                     </div>
                   )}
 
-                  <div className="pt-6">
+                  <div className="pt-6 space-y-3">
+                    {/* Quota warnings */}
+                    {mode === ToolType.VIDEO_VEO && !canGenerateVideo() && !quotaLoading && (
+                      <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>Batas video harian habis ({LIMIT_VIDEO}/hari). Reset besok pukul 00:00.</span>
+                      </div>
+                    )}
+                    {mode === ToolType.IMAGE_NANO && !canGenerateImage() && !quotaLoading && (
+                      <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>Batas gambar harian habis ({LIMIT_IMAGE}/hari). Reset besok pukul 00:00.</span>
+                      </div>
+                    )}
+                    {mode === ToolType.VIDEO_VEO && canGenerateVideo() && remainingVideo() <= 3 && !quotaLoading && (
+                      <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-sm">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>Sisa {remainingVideo()} video hari ini.</span>
+                      </div>
+                    )}
+                    {mode === ToolType.IMAGE_NANO && canGenerateImage() && remainingImage() <= 5 && !quotaLoading && (
+                      <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-sm">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>Sisa {remainingImage()} gambar hari ini.</span>
+                      </div>
+                    )}
                     <Button
                       type="submit"
                       size="lg"
                       className="w-full text-lg font-semibold shadow-xl shadow-primary/20"
                       isLoading={isSubmitting}
+                      disabled={isSubmitting || (!quotaLoading && (mode === ToolType.VIDEO_VEO ? !canGenerateVideo() : !canGenerateImage()))}
                     >
                       <Wand2 className="w-5 h-5 mr-2" />
                       Generate {mode === ToolType.VIDEO_VEO ? 'Video' : 'Image'}
+                      {!quotaLoading && mode === ToolType.VIDEO_VEO && canGenerateVideo() && (
+                        <span className="ml-2 text-xs opacity-60">({remainingVideo()} tersisa)</span>
+                      )}
+                      {!quotaLoading && mode === ToolType.IMAGE_NANO && canGenerateImage() && (
+                        <span className="ml-2 text-xs opacity-60">({remainingImage()} tersisa)</span>
+                      )}
                     </Button>
                   </div>
                 </form>
@@ -1219,6 +1411,44 @@ const App: React.FC = () => {
       </div>
     </>
   );
+};
+
+const App: React.FC = () => {
+  const { user, loading } = useAuth();
+  const [authView, setAuthView] = useState<AppView>('landing');
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary to-purple-700 flex items-center justify-center animate-pulse">
+            <Zap className="w-6 h-6 text-white" fill="currentColor" />
+          </div>
+          <div className="text-gray-400 text-sm animate-pulse">Memuat Nexus Studio...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    if (authView === 'landing') {
+      return (
+        <LandingPage
+          onLogin={() => setAuthView('login')}
+          onRegister={() => setAuthView('register')}
+        />
+      );
+    }
+    return (
+      <AuthPage
+        mode={authView === 'login' ? 'login' : 'register'}
+        onToggleMode={() => setAuthView(authView === 'login' ? 'register' : 'login')}
+        onBack={() => setAuthView('landing')}
+      />
+    );
+  }
+
+  return <StudioApp />;
 };
 
 export default App;

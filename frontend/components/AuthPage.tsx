@@ -16,21 +16,14 @@ const PasswordStrength = ({ password }: { password: string }) => {
     { label: 'Huruf besar', valid: /[A-Z]/.test(password) },
     { label: 'Angka', valid: /[0-9]/.test(password) },
   ];
-
   const strength = checks.filter((c) => c.valid).length;
   const colors = ['bg-red-500', 'bg-yellow-500', 'bg-green-500'];
-  const labels = ['Lemah', 'Sedang', 'Kuat'];
-
   if (!password) return null;
-
   return (
     <div className="space-y-2 mt-2">
       <div className="flex gap-1">
         {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className={`h-1 flex-1 rounded-full transition-all ${i < strength ? colors[strength - 1] : 'bg-white/10'}`}
-          />
+          <div key={i} className={`h-1 flex-1 rounded-full transition-all ${i < strength ? colors[strength - 1] : 'bg-white/10'}`} />
         ))}
       </div>
       <div className="flex gap-4">
@@ -47,7 +40,6 @@ const PasswordStrength = ({ password }: { password: string }) => {
 
 export const AuthPage: React.FC<AuthPageProps> = ({ mode, onToggleMode, onBack }) => {
   const { register, login } = useAuth();
-
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -76,16 +68,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onToggleMode, onBack }
     e.preventDefault();
     setError('');
     setSuccess('');
-
-    if (isRegister && !name.trim()) {
-      setError('Nama wajib diisi.');
-      return;
-    }
-    if (isRegister && password.length < 8) {
-      setError('Password minimal 8 karakter.');
-      return;
-    }
-
+    if (isRegister && !name.trim()) { setError('Nama wajib diisi.'); return; }
+    if (isRegister && password.length < 8) { setError('Password minimal 8 karakter.'); return; }
     setIsLoading(true);
     try {
       if (isRegister) {
@@ -103,12 +87,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onToggleMode, onBack }
 
   return (
     <div className="min-h-screen bg-background text-white flex flex-col">
-      {/* Back button */}
       <div className="p-6">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-sm"
-        >
+        <button onClick={onBack} className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-sm">
           <ArrowLeft className="w-4 h-4" />
           Kembali ke Beranda
         </button>
@@ -134,9 +114,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onToggleMode, onBack }
             </p>
           </div>
 
-          {/* Form card */}
+          {/* Card */}
           <div className="rounded-2xl border border-white/10 bg-surface/50 backdrop-blur p-8 shadow-2xl">
-            {/* Error / Success messages */}
             {error && (
               <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm mb-6">
                 <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -151,7 +130,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onToggleMode, onBack }
             )}
 
             <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Name field (register only) */}
               {isRegister && (
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-gray-300">Nama Lengkap</label>
@@ -169,7 +147,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onToggleMode, onBack }
                 </div>
               )}
 
-              {/* Email */}
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-gray-300">Email</label>
                 <div className="relative">
@@ -185,7 +162,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onToggleMode, onBack }
                 </div>
               </div>
 
-              {/* Password */}
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-gray-300">Password</label>
                 <div className="relative">
@@ -209,48 +185,32 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onToggleMode, onBack }
                 {isRegister && <PasswordStrength password={password} />}
               </div>
 
-              {/* Submit */}
               <button
                 type="submit"
                 disabled={isLoading}
                 className="w-full flex items-center justify-center gap-2 py-3.5 bg-primary hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed text-white rounded-xl font-semibold transition-all shadow-lg shadow-primary/25 mt-2"
               >
                 {isLoading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    {isRegister ? 'Membuat akun...' : 'Masuk...'}
-                  </>
+                  <><Loader2 className="w-4 h-4 animate-spin" />{isRegister ? 'Membuat akun...' : 'Masuk...'}</>
                 ) : (
                   isRegister ? '🚀 Buat Akun & Mulai Berkreasi' : '✨ Masuk ke Studio'
                 )}
               </button>
             </form>
 
-            {/* Toggle mode */}
             <div className="mt-6 pt-6 border-t border-white/5 text-center text-sm text-gray-500">
               {isRegister ? (
-                <>
-                  Sudah punya akun?{' '}
-                  <button onClick={onToggleMode} className="text-primary hover:text-primary/80 font-medium transition-colors">
-                    Masuk sekarang
-                  </button>
-                </>
+                <>Sudah punya akun?{' '}<button onClick={onToggleMode} className="text-primary hover:text-primary/80 font-medium transition-colors">Masuk sekarang</button></>
               ) : (
-                <>
-                  Belum punya akun?{' '}
-                  <button onClick={onToggleMode} className="text-primary hover:text-primary/80 font-medium transition-colors">
-                    Daftar gratis
-                  </button>
-                </>
+                <>Belum punya akun?{' '}<button onClick={onToggleMode} className="text-primary hover:text-primary/80 font-medium transition-colors">Daftar gratis</button></>
               )}
             </div>
           </div>
 
-          {/* Trust badges */}
           <div className="mt-6 flex items-center justify-center gap-6 text-xs text-gray-600">
-            <span className="flex items-center gap-1">🔒 Data aman & terenkripsi</span>
-            <span className="flex items-center gap-1">⚡ Akses instan</span>
-            <span className="flex items-center gap-1">🆓 Gratis selamanya</span>
+            <span>🔒 Data aman & terenkripsi</span>
+            <span>⚡ Akses instan</span>
+            <span>🆓 Gratis selamanya</span>
           </div>
         </div>
       </div>

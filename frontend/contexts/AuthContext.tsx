@@ -13,7 +13,6 @@ import {
   getFirestore,
   doc,
   setDoc,
-  getDoc,
   onSnapshot,
   serverTimestamp,
   Unsubscribe,
@@ -32,12 +31,12 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-// ── Konstanta limit harian ───────────────────────────────────────────────────
+// ── Limit harian ─────────────────────────────────────────────────────────────
 export const LIMIT_VIDEO = 10;
 export const LIMIT_IMAGE = 20;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-function todayDateString(): string {
+// ── Helper tanggal ────────────────────────────────────────────────────────────
+function todayString(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -45,7 +44,7 @@ function todayDateString(): string {
 export interface UsageQuota {
   videoUsed: number;
   imageUsed: number;
-  resetDate: string; // "YYYY-MM-DD"
+  resetDate: string;
 }
 
 export interface UserProfile {
@@ -62,7 +61,7 @@ interface AuthContextType {
   user: User | null;
   userProfile: UserProfile | null;
   loading: boolean;
-  quotaLoading: boolean; // true selama menunggu Firestore load pertama kali
+  quotaLoading: boolean;
   register: (email: string, password: string, name: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -77,16 +76,15 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | null>(null);
 
 function defaultQuota(): UsageQuota {
-  return { videoUsed: 0, imageUsed: 0, resetDate: todayDateString() };
+  return { videoUsed: 0, imageUsed: 0, resetDate: todayString() };
 }
 
-function isQuotaStale(quota: UsageQuota | undefined): boolean {
-  if (!quota?.resetDate) return true;
-  return quota.resetDate !== todayDateString();
+function isStale(quota?: UsageQuota): boolean {
+  return !quota?.resetDate || quota.resetDate !== todayString();
 }
 
-// Simpan ke Firestore pakai setDoc+merge supaya SELALU berhasil (create atau update)
-async function saveToFirestore(uid: string, data: Partial<UserProfile>): Promise<void> {
+// setDoc+merge — works for both create and update, never fails on missing doc
+async function saveFirestore(uid: string, data: Partial<UserProfile>): Promise<void> {
   await setDoc(doc(db, 'users', uid), data, { merge: true });
 }
 
@@ -94,22 +92,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [quotaLoading, setQuotaLoading] = useState(true); // tunggu Firestore load pertama
+  const [quotaLoading, setQuotaLoading] = useState(true);
 
-  // Simpan ref supaya increment bisa baca nilai terbaru tanpa closure stale
-  const userProfileRef = useRef<UserProfile | null>(null);
-  useEffect(() => { userProfileRef.current = userProfile; }, [userProfile]);
-
+  // Refs so increment functions always read latest values without stale closures
+  const profileRef = useRef<UserProfile | null>(null);
   const userRef = useRef<User | null>(null);
+  useEffect(() => { profileRef.current = userProfile; }, [userProfile]);
   useEffect(() => { userRef.current = user; }, [user]);
 
   useEffect(() => {
     let firestoreUnsub: Unsubscribe | null = null;
 
-    const authUnsub = onAuthStateChanged(auth, async (firebaseUser) => {
-      // Bersihkan listener Firestore sebelumnya
+    const authUnsub = onAuthStateChanged(auth, (firebaseUser) => {
       if (firestoreUnsub) { firestoreUnsub(); firestoreUnsub = null; }
-
       setUser(firebaseUser);
 
       if (!firebaseUser) {
@@ -119,16 +114,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
 
-      // Auth resolved → app bisa tampil (tanpa data Firestore dulu)
       setLoading(false);
-      setQuotaLoading(true); // masih nunggu quota dari Firestore
+      setQuotaLoading(true);
 
       const docRef = doc(db, 'users', firebaseUser.uid);
 
-      // Subscribe realtime — setiap perubahan Firestore langsung update state
       firestoreUnsub = onSnapshot(docRef, async (snap) => {
         if (!snap.exists()) {
-          // Dokumen belum ada → buat sekarang
+          // Dokumen belum ada — buat sekarang (misal user lama sebelum ada Firestore)
           const newProfile: UserProfile = {
             uid: firebaseUser.uid,
             email: firebaseUser.email ?? '',
@@ -138,52 +131,36 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             jobCount: 0,
             quota: defaultQuota(),
           };
-          try {
-            await setDoc(docRef, newProfile);
-            // onSnapshot akan trigger lagi dengan data baru
-          } catch (e: any) {
-            console.warn('[Auth] gagal buat dokumen user:', e?.code ?? e?.message);
-            setQuotaLoading(false);
-          }
+          try { await setDoc(docRef, newProfile); } catch (_) {}
           return;
         }
 
         const data = snap.data() as UserProfile;
 
-        // Cek apakah quota perlu di-reset (beda hari)
-        if (isQuotaStale(data.quota)) {
+        if (isStale(data.quota)) {
+          // Hari berganti — reset quota
           const resetQuota = defaultQuota();
-          const updated = { ...data, quota: resetQuota };
-          setUserProfile(updated);
+          setUserProfile({ ...data, quota: resetQuota });
           setQuotaLoading(false);
-          // Simpan reset ke Firestore
-          try {
-            await setDoc(docRef, { quota: resetQuota }, { merge: true });
-          } catch (e: any) {
-            console.warn('[Auth] gagal reset quota:', e?.code);
-          }
+          try { await saveFirestore(firebaseUser.uid, { quota: resetQuota }); } catch (_) {}
         } else {
           setUserProfile(data);
           setQuotaLoading(false);
         }
       }, (err) => {
-        console.warn('[Auth] onSnapshot error:', err?.code ?? err?.message);
+        console.warn('[Auth] Firestore error:', err?.code);
         setQuotaLoading(false);
       });
     });
 
-    return () => {
-      authUnsub();
-      if (firestoreUnsub) firestoreUnsub();
-    };
+    return () => { authUnsub(); if (firestoreUnsub) firestoreUnsub(); };
   }, []);
 
   const register = async (email: string, password: string, name: string) => {
-    const credential = await createUserWithEmailAndPassword(auth, email, password);
-    await updateProfile(credential.user, { displayName: name });
-
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    await updateProfile(cred.user, { displayName: name });
     const profile: UserProfile = {
-      uid: credential.user.uid,
+      uid: cred.user.uid,
       email,
       displayName: name,
       createdAt: serverTimestamp(),
@@ -191,10 +168,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       jobCount: 0,
       quota: defaultQuota(),
     };
-
-    // Pakai setDoc biasa (bukan merge) karena ini create pertama
-    await setDoc(doc(db, 'users', credential.user.uid), profile);
-    // onAuthStateChanged + onSnapshot akan auto-update state
+    await setDoc(doc(db, 'users', cred.user.uid), profile);
   };
 
   const login = async (email: string, password: string) => {
@@ -208,57 +182,39 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   // ── Quota helpers ─────────────────────────────────────────────────────────
-  const getEffectiveQuota = (): UsageQuota => {
-    const profile = userProfileRef.current;
-    if (!profile?.quota || isQuotaStale(profile.quota)) return defaultQuota();
-    return profile.quota;
+  const effectiveQuota = (): UsageQuota => {
+    const p = profileRef.current;
+    if (!p?.quota || isStale(p.quota)) return defaultQuota();
+    return p.quota;
   };
 
-  const canGenerateVideo = () => getEffectiveQuota().videoUsed < LIMIT_VIDEO;
-  const canGenerateImage = () => getEffectiveQuota().imageUsed < LIMIT_IMAGE;
-  const remainingVideo = () => Math.max(0, LIMIT_VIDEO - getEffectiveQuota().videoUsed);
-  const remainingImage = () => Math.max(0, LIMIT_IMAGE - getEffectiveQuota().imageUsed);
+  const canGenerateVideo = () => effectiveQuota().videoUsed < LIMIT_VIDEO;
+  const canGenerateImage = () => effectiveQuota().imageUsed < LIMIT_IMAGE;
+  const remainingVideo = () => Math.max(0, LIMIT_VIDEO - effectiveQuota().videoUsed);
+  const remainingImage = () => Math.max(0, LIMIT_IMAGE - effectiveQuota().imageUsed);
 
   const incrementVideoUsage = async () => {
-    const currentUser = userRef.current;
-    const profile = userProfileRef.current;
-    if (!currentUser || !profile) return;
-
-    const quota = getEffectiveQuota();
-    const newQuota: UsageQuota = { ...quota, videoUsed: quota.videoUsed + 1 };
-
-    // Optimistic update lokal dulu
-    const updated = { ...profile, quota: newQuota, jobCount: (profile.jobCount || 0) + 1 };
-    setUserProfile(updated);
-    userProfileRef.current = updated;
-
-    // Simpan ke Firestore — pakai setDoc+merge (SELALU berhasil, tidak peduli dok ada atau tidak)
+    const u = userRef.current; const p = profileRef.current;
+    if (!u || !p) return;
+    const q = effectiveQuota();
+    const newQuota = { ...q, videoUsed: q.videoUsed + 1 };
+    const updated = { ...p, quota: newQuota, jobCount: (p.jobCount || 0) + 1 };
+    setUserProfile(updated); profileRef.current = updated;
     try {
-      await saveToFirestore(currentUser.uid, { quota: newQuota, jobCount: updated.jobCount });
-      console.log('[Quota] Video usage saved to Firestore:', newQuota);
-    } catch (e: any) {
-      console.warn('[Quota] Gagal simpan video quota:', e?.code ?? e?.message);
-    }
+      await saveFirestore(u.uid, { quota: newQuota, jobCount: updated.jobCount });
+    } catch (e: any) { console.warn('[Quota] video save failed:', e?.code); }
   };
 
   const incrementImageUsage = async () => {
-    const currentUser = userRef.current;
-    const profile = userProfileRef.current;
-    if (!currentUser || !profile) return;
-
-    const quota = getEffectiveQuota();
-    const newQuota: UsageQuota = { ...quota, imageUsed: quota.imageUsed + 1 };
-
-    const updated = { ...profile, quota: newQuota, jobCount: (profile.jobCount || 0) + 1 };
-    setUserProfile(updated);
-    userProfileRef.current = updated;
-
+    const u = userRef.current; const p = profileRef.current;
+    if (!u || !p) return;
+    const q = effectiveQuota();
+    const newQuota = { ...q, imageUsed: q.imageUsed + 1 };
+    const updated = { ...p, quota: newQuota, jobCount: (p.jobCount || 0) + 1 };
+    setUserProfile(updated); profileRef.current = updated;
     try {
-      await saveToFirestore(currentUser.uid, { quota: newQuota, jobCount: updated.jobCount });
-      console.log('[Quota] Image usage saved to Firestore:', newQuota);
-    } catch (e: any) {
-      console.warn('[Quota] Gagal simpan image quota:', e?.code ?? e?.message);
-    }
+      await saveFirestore(u.uid, { quota: newQuota, jobCount: updated.jobCount });
+    } catch (e: any) { console.warn('[Quota] image save failed:', e?.code); }
   };
 
   return (
